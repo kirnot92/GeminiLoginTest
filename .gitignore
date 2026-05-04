@@ -1,0 +1,23 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Build output
+bin/
+obj/
+[Bb]in/
+[Oo]bj/
+
+# .NET
+*.nupkg
+*.snupkg
+project.lock.json
+project.assets.json
+
+# OS/editor noise
+Thumbs.db
+Desktop.ini
+.DS_Store
