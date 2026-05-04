@@ -1,7 +1,7 @@
+using Google.Apis.Auth.OAuth2;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
-using Google.Apis.Auth.OAuth2;
 
 namespace GeminiLoginTest;
 
@@ -9,6 +9,9 @@ sealed class CodeAssistApiClient : IDisposable
 {
     const string Endpoint = "https://cloudcode-pa.googleapis.com/v1internal";
     const int MaxGenerateAttempts = 6;
+
+    // clientId와 clientSecret은 이미 공개되어있는 값임. 아래 링크 참조.
+    // https://github.com/google-gemini/gemini-cli/blob/main/packages/core/src/code_assist/oauth2.ts
     const string OAuthClientId = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com";
     const string OAuthClientSecret = "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";
 
@@ -26,8 +29,8 @@ sealed class CodeAssistApiClient : IDisposable
 
     public CodeAssistApiClient(HttpClient httpClient, bool disposeHttpClient = false)
     {
-        _httpClient = httpClient;
-        _disposeHttpClient = disposeHttpClient;
+        this._httpClient = httpClient;
+        this._disposeHttpClient = disposeHttpClient;
     }
 
     public async Task LoginAsync(CancellationToken cancellationToken = default)
@@ -43,7 +46,7 @@ sealed class CodeAssistApiClient : IDisposable
 
         var authenticator = new GoogleOAuthAuthenticator();
         var credential = await authenticator.AuthorizeAsync(clientSecrets, cancellationToken);
-        _accessToken = credential.Token.AccessToken;
+        this._accessToken = credential.Token.AccessToken;
     }
 
     public async Task InitializeCodeAssistAsync(CancellationToken cancellationToken = default)
@@ -53,23 +56,23 @@ sealed class CodeAssistApiClient : IDisposable
             metadata = CreateMetadata()
         };
 
-        using var document = await PostJsonAsync("loadCodeAssist", body, cancellationToken);
+        using var document = await this.PostJsonAsync("loadCodeAssist", body, cancellationToken);
         var root = document.RootElement;
         var snapshot = CodeAssistLoadSnapshot.FromJson(root);
 
         if (!string.IsNullOrWhiteSpace(snapshot.Project))
         {
-            _project = snapshot.Project;
-            _loadSnapshot = snapshot;
+            this._project = snapshot.Project;
+            this._loadSnapshot = snapshot;
             return;
         }
 
-        var onboardProject = await TryOnboardDefaultTierAsync(root, cancellationToken);
+        var onboardProject = await this.TryOnboardDefaultTierAsync(root, cancellationToken);
         if (!string.IsNullOrWhiteSpace(onboardProject))
         {
             var onboardedSnapshot = snapshot with { OnboardedProject = onboardProject };
-            _project = onboardedSnapshot.Project;
-            _loadSnapshot = onboardedSnapshot;
+            this._project = onboardedSnapshot.Project;
+            this._loadSnapshot = onboardedSnapshot;
             return;
         }
 
@@ -78,14 +81,14 @@ sealed class CodeAssistApiClient : IDisposable
 
     public CodeAssistLoadSnapshot GetLoadSnapshot()
     {
-        return _loadSnapshot ??
+        return this._loadSnapshot ??
             throw new InvalidOperationException("Call InitializeCodeAssistAsync before reading the Code Assist account snapshot.");
     }
 
     public async Task<QuotaSnapshot> RetrieveUserQuotaAsync(CancellationToken cancellationToken = default)
     {
-        var body = new { project = RequireProject() };
-        using var document = await PostJsonAsync("retrieveUserQuota", body, cancellationToken);
+        var body = new { project = this.RequireProject() };
+        using var document = await this.PostJsonAsync("retrieveUserQuota", body, cancellationToken);
         return QuotaSnapshot.FromJson(document.RootElement);
     }
 
@@ -110,7 +113,7 @@ sealed class CodeAssistApiClient : IDisposable
 
         parts.Add(new { text = prompt });
 
-        return await SendGenerateContentRequestAsync(
+        return await this.SendGenerateContentRequestAsync(
             model,
             parts.ToArray(),
             CreateJsonResponseGenerationConfig(),
@@ -128,7 +131,7 @@ sealed class CodeAssistApiClient : IDisposable
             var body = new
             {
                 model,
-                project = RequireProject(),
+                project = this.RequireProject(),
                 user_prompt_id = Guid.NewGuid().ToString("N"),
                 request = new
                 {
@@ -147,13 +150,13 @@ sealed class CodeAssistApiClient : IDisposable
 
             try
             {
-                using var document = await PostJsonAsync("generateContent", body, cancellationToken);
+                using var document = await this.PostJsonAsync("generateContent", body, cancellationToken);
                 var rawBody = document.RootElement.GetRawText();
                 return GeminiGenerateContentResult.Success(ExtractText(document.RootElement), rawBody);
             }
             catch (CodeAssistApiException ex) when (ex.IsRetryable && attempt < MaxGenerateAttempts)
             {
-                var delay = GetRetryDelay(attempt, ex.RetryAfter);
+                var delay = this.GetRetryDelay(attempt, ex.RetryAfter);
                 Console.WriteLine(
                     $"Retrying after transient error: attempt {attempt}/{MaxGenerateAttempts}, " +
                     $"status {ex.StatusCode}, reason {ex.ErrorReason ?? "unknown"}, " +
@@ -171,9 +174,9 @@ sealed class CodeAssistApiClient : IDisposable
 
     public void Dispose()
     {
-        if (_disposeHttpClient)
+        if (this._disposeHttpClient)
         {
-            _httpClient.Dispose();
+            this._httpClient.Dispose();
         }
     }
 
@@ -183,11 +186,11 @@ sealed class CodeAssistApiClient : IDisposable
         CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{Endpoint}:{method}");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", RequireAccessToken());
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", this.RequireAccessToken());
         request.Headers.Add("x-goog-api-client", "gemini-login-test/1.0");
         request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
 
-        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        using var response = await this._httpClient.SendAsync(request, cancellationToken);
         var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
 
         if (!response.IsSuccessStatusCode)
@@ -219,7 +222,7 @@ sealed class CodeAssistApiClient : IDisposable
             metadata = CreateMetadata()
         };
 
-        using var onboardDocument = await PostJsonAsync("onboardUser", body, cancellationToken);
+        using var onboardDocument = await this.PostJsonAsync("onboardUser", body, cancellationToken);
         var operation = onboardDocument.RootElement;
         if (TryExtractOnboardProject(operation, out var project))
         {
@@ -234,7 +237,7 @@ sealed class CodeAssistApiClient : IDisposable
         for (var i = 0; i < 24; i++)
         {
             await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
-            using var operationDocument = await GetOperationAsync(operationName, cancellationToken);
+            using var operationDocument = await this.GetOperationAsync(operationName, cancellationToken);
             if (TryExtractOnboardProject(operationDocument.RootElement, out project))
             {
                 return project;
@@ -255,9 +258,9 @@ sealed class CodeAssistApiClient : IDisposable
         CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, $"{Endpoint}/{operationName}");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", RequireAccessToken());
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", this.RequireAccessToken());
 
-        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        using var response = await this._httpClient.SendAsync(request, cancellationToken);
         var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
 
         if (!response.IsSuccessStatusCode)
@@ -274,16 +277,16 @@ sealed class CodeAssistApiClient : IDisposable
 
     string RequireAccessToken()
     {
-        return string.IsNullOrWhiteSpace(_accessToken)
+        return string.IsNullOrWhiteSpace(this._accessToken)
             ? throw new InvalidOperationException("Call LoginAsync before using the Code Assist API.")
-            : _accessToken;
+            : this._accessToken;
     }
 
     string RequireProject()
     {
-        return string.IsNullOrWhiteSpace(_project)
+        return string.IsNullOrWhiteSpace(this._project)
             ? throw new InvalidOperationException("Call InitializeCodeAssistAsync before using project-scoped Code Assist APIs.")
-            : _project;
+            : this._project;
     }
 
     TimeSpan GetRetryDelay(int attempt, TimeSpan? retryAfter)
@@ -294,7 +297,7 @@ sealed class CodeAssistApiClient : IDisposable
         }
 
         var baseDelay = TimeSpan.FromSeconds(Math.Min(30, Math.Pow(2, attempt)));
-        var jitter = TimeSpan.FromMilliseconds(_jitter.Next(250, 1250));
+        var jitter = TimeSpan.FromMilliseconds(this._jitter.Next(250, 1250));
         return baseDelay + jitter;
     }
 
